@@ -1,0 +1,28 @@
+{
+  "title": "My Smart Home",
+  "devices": [
+    { "name": "ESP32", "url": "http://192.168.1.37/" },
+    { "name": "ESP32 Setup", "url": "http://192.168.4.1/" }
+  ],
+  "activeDevice": 0,
+  "themeMode": 2,
+  "accent": 4764863,
+  "showToolbar": true,
+  "pageZoom": 100,
+  "autoRefreshSeconds": 0,
+  "timeoutSeconds": 15,
+  "javaScript": true,
+  "hindi": true,
+  "apiKey": "",
+  "pollSeconds": 2,
+  "rooms": [ "Room 1", "Room 2", "Room 3" ],
+  "roomOf": {},
+  "mqttConfig": {
+    "enabled": false,
+    "broker": "broker.emqx.io",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "topicPrefix": "smarthome"
+  }
+}

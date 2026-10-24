@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ESP32 Smart Home - app configuration",
+  "description": "Configuration stored for the Flutter dashboard. Sensitive MQTT credentials are kept in encrypted secure storage, not in shared_preferences.",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "App name shown in the top bar.",
+      "default": "SMART HOME"
+    },
+    "devices": {
+      "type": "array",
+      "description": "Known ESP32 endpoints (name + URL/IP).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "pattern": "^https?://.+/$" }
+        },
+        "required": ["name", "url"]
+      },
+      "default": [ { "name": "ESP32", "url": "http://192.168.1.37/" } ]
+    },
+    "activeDevice": {
+      "type": "integer",
+      "description": "Index of the currently selected ESP32.",
+      "default": 0
+    },
+    "themeMode": {
+      "type": "integer",
+      "description": "0 = system, 1 = light, 2 = dark",
+      "enum": [0, 1, 2],
+      "default": 2
+    },
+    "accent": {
+      "type": "integer",
+      "description": "Accent colour as 0xFFRRGGBB.",
+      "default": 4764863,
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "showToolbar": { "type": "boolean", "default": true },
+    "pageZoom": {
+      "type": "integer",
+      "description": "Web view zoom percent (70-150).",
+      "default": 100,
+      "minimum": 70,
+      "maximum": 150
+    },
+    "autoRefreshSeconds": {
+      "type": "integer",
+      "description": "0 = off; seconds between dashboard refreshes.",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 300
+    },
+    "timeoutSeconds": {
+      "type": "integer",
+      "description": "HTTP load timeout seconds (5-120).",
+      "default": 15,
+      "minimum": 5,
+      "maximum": 120
+    },
+    "javaScript": { "type": "boolean", "default": true },
+    "hindi": { "type": "boolean", "default": true },
+    "apiKey": {
+      "type": "string",
+      "description": "X-API-Key sent to the ESP32. Empty = no key required.",
+      "default": ""
+    },
+    "pollSeconds": {
+      "type": "integer",
+      "description": "Seconds between /api/state polls (1-30).",
+      "default": 2,
+      "minimum": 1,
+      "maximum": 30
+    },
+    "rooms": {
+      "type": "array",
+      "description": "Room tab names kept only in the app.",
+      "items": { "type": "string" },
+      "default": [ "Room 1", "Room 2", "Room 3" ]
+    },
+    "roomOf": {
+      "type": "object",
+      "description": "Device id -> room index overrides.",
+      "additionalProperties": { "type": "integer" },
+      "default": {}
+    },
+    "mqttConfig": {
+      "type": "object",
+      "description": "MQTT bridge configuration. Stored in encrypted secure storage.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "broker": { "type": "string", "description": "MQTT broker host or IP", "default": "" },
+        "port": {
+          "type": "integer",
+          "description": "Broker port (1883 plain, 8883 TLS).",
+          "default": 1883,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": { "type": "string", "default": "" },
+        "password": { "type": "string", "default": "" },
+        "topicPrefix": {
+          "type": "string",
+          "description": "Topics: <prefix>/state (publish) and <prefix>/command (subscribe).",
+          "default": "smarthome"
+        }
+      },
+      "required": ["enabled", "broker", "port", "username", "password", "topicPrefix"]
+    }
+  },
+  "required": ["title", "devices", "activeDevice", "themeMode", "accent", "mqttConfig"],
+  "additionalProperties": false
+}
