@@ -290,7 +290,7 @@ class SettingsPage extends StatelessWidget {
                   subtitle: Text(s.mqttConfig.broker.isEmpty
                       ? tr.mqttBrokerNone
                       : '${s.mqttConfig.broker}:${s.mqttConfig.port}'),
-                  onTap: () async => await _editMqtt(context, tr, s),
+                  onTap: () async => await _editMqtt(context, tr, s, change),
                 ),
               ],
               _Section(tr.sectionAbout),
@@ -522,7 +522,7 @@ Future<Device?> _editDevice(BuildContext context, Tr tr, Device? existing) {
   );
 }
 
-  Future<void> _editMqtt(BuildContext context, Tr tr, AppSettings s) async {
+  Future<void> _editMqtt(BuildContext context, Tr tr, AppSettings s, void Function(AppSettings) change) async {
     final broker = TextEditingController(text: s.mqttConfig.broker);
     final port = TextEditingController(text: s.mqttConfig.port.toString());
     final user = TextEditingController(text: s.mqttConfig.username);
