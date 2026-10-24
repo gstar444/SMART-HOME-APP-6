@@ -49,7 +49,7 @@ class SecureStorage {
 
   /// Writes an int.
   Future<void> writeInt(String key, int value) async {
-    await _storage.write(key: key, value.toString());
+    await _storage.write(key: key, value: value.toString());
   }
 
   /// Reads a bool, returning [defaultValue] when absent or unreadable.
@@ -65,7 +65,7 @@ class SecureStorage {
 
   /// Writes a bool.
   Future<void> writeBool(String key, bool value) async {
-    await _storage.write(key: key, value ? '1' : '0');
+    await _storage.write(key: key, value: value ? '1' : '0');
   }
 
   /// Reads a JSON object, returning [defaultValue] when absent or unreadable.
@@ -85,7 +85,7 @@ class SecureStorage {
 
   /// Writes a JSON object.
   Future<void> writeJson(String key, Map<String, dynamic> value) async {
-    await _storage.write(key: key, jsonEncode(value));
+    await _storage.write(key: key, value: jsonEncode(value));
   }
 
   /// Removes a key.
