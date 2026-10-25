@@ -1,28 +1,31 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
 
+import 'esp32_api.dart';
 import 'models.dart';
+import 'mqtt_config.dart';
 import 'secure_storage.dart';
+
+export 'mqtt_config.dart';
 
 /// MQTT bridge between the app and an MQTT broker.
 ///
-/// The ESP32 firmware publishes its state to `<prefix>/state` and subscribes to
-/// `<prefix>/command`. This service mirrors that: it publishes the local state
-/// snapshot to `state` and forwards incoming `command` messages through
-/// [onCommand] so the dashboard can act on them (over the normal HTTP API).
+/// The ESP32 publishes its state to `<prefix>/state` and listens on
+/// `<prefix>/command`. Incoming command messages are forwarded to [onCommand].
 class MqttService extends ChangeNotifier {
   MqttService(this._storage, {this.onCommand});
 
   final SecureStorage _storage;
   final void Function(Map<String, dynamic> command)? onCommand;
 
-  MqttClient? _client;
-  StreamSubscription<MqttPublishMessage>? _updatesSub;
+  MqttServerClient? _client;
+  StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _updatesSub;
   Timer? _reconnectTimer;
-  Timer? _publishTimer;
 
   MqttConfig _config = const MqttConfig(
     enabled: false,
@@ -34,8 +37,9 @@ class MqttService extends ChangeNotifier {
   );
 
   bool _connected = false;
-  String? _error;
   bool _connecting = false;
+  bool _disposed = false;
+  String? _error;
 
   MqttConfig get config => _config;
   bool get enabled => _config.enabled;
@@ -43,161 +47,180 @@ class MqttService extends ChangeNotifier {
   bool get connecting => _connecting;
   String? get error => _error;
 
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
   /// Loads persisted MQTT config from secure storage.
   Future<void> load() async {
     final raw = await _storage.readJson(SecureStorage.mqttConfig);
     if (raw.isNotEmpty) {
       _config = MqttConfig.fromJson(raw);
     }
-    notifyListeners();
+    _notify();
   }
 
   /// Persists the given config and (re)connects when enabled.
   Future<void> setConfig(MqttConfig next) async {
     _config = next;
     await _storage.writeJson(SecureStorage.mqttConfig, next.toJson());
-    // Keep individual fields too so legacy reads still work.
     await _storage.writeBool(SecureStorage.mqttEnabled, next.enabled);
     await _storage.writeString(SecureStorage.mqttBroker, next.broker);
     await _storage.writeInt(SecureStorage.mqttPort, next.port);
     await _storage.writeString(SecureStorage.mqttUsername, next.username);
     await _storage.writeString(SecureStorage.mqttPassword, next.password);
     await _storage.writeString(SecureStorage.mqttTopicPrefix, next.topicPrefix);
-    notifyListeners();
+    _notify();
     if (next.enabled) {
-      connect();
+      await connect();
     } else {
-      disconnect();
+      await disconnect();
     }
   }
 
   @override
   void dispose() {
-    disconnect();
+    _disposed = true;
+    _connecting = false;
+    _connected = false;
     _reconnectTimer?.cancel();
-    _publishTimer?.cancel();
     _updatesSub?.cancel();
+    final c = _client;
+    _client = null;
+    c?.onDisconnected = null;
+    c?.disconnect();
     super.dispose();
   }
 
   Future<void> connect() async {
+    if (_disposed) return;
     if (!_config.enabled || _config.broker.isEmpty) return;
     if (_connecting || _connected) return;
-    _connecting = true;
-    _error = null;
-    notifyListeners();
 
     await disconnect();
 
-    final client = MqttClient(_config.broker, 'flutter_app_${DateTime.now().millisecondsSinceEpoch}')
-      ..port = _config.port
-      ..keepAlivePeriod = 30
-      ..secure = _config.port == 8883
-      ..onConnected = _onConnected
-      ..onDisconnected = _onDisconnected
-      ..onSubscribed = _onSubscribed
-      ..logging = false;
+    _connecting = true;
+    _error = null;
+    _notify();
 
-    if (_config.username.isNotEmpty) {
-      client.username = _config.username;
-      client.password = _config.password;
+    final client = MqttServerClient.withPort(
+      _config.broker,
+      'flutter_app_${DateTime.now().millisecondsSinceEpoch}',
+      _config.port,
+    );
+    client.keepAlivePeriod = 30;
+    client.secure = _config.port == 8883;
+    if (client.secure) {
+      client.securityContext = SecurityContext.defaultContext;
     }
+    client.onConnected = _onConnected;
+    client.onDisconnected = _onDisconnected;
+    client.logging(on: false);
 
     _client = client;
 
-    bool ok;
+    String? err;
     try {
-      ok = await client.connect(_config.username, _config.password).timeout(
-            const Duration(seconds: 10),
-          );
+      await client
+          .connect(
+            _config.username.isEmpty ? null : _config.username,
+            _config.password.isEmpty ? null : _config.password,
+          )
+          .timeout(const Duration(seconds: 10));
     } catch (e) {
-      ok = false;
-      _setError('connect failed: ${_mqttError(e)}');
+      err = 'connect failed: ${_mqttError(e)}';
     }
 
-    if (!_connecting) return; // disposed or replaced meanwhile
+    // Replaced, disconnected or disposed while connecting.
+    if (_disposed || !_connecting || _client != client) return;
 
     _connecting = false;
-    if (ok && client.connectionStatus?.state == MqttConnectionState.connected) {
+    if (err == null &&
+        client.connectionStatus?.state == MqttConnectionState.connected) {
       _connected = true;
       _error = null;
-      _subscribe();
-      notifyListeners();
+      _subscribe(client);
     } else {
       _connected = false;
-      if (_error == null) {
-        _setError('broker rejected connection '
-            '${client.connectionStatus?.state ?? 'unknown'}');
-      }
+      _error = err ??
+          'broker rejected connection: '
+              '${client.connectionStatus?.state ?? 'unknown'}';
+      client.disconnect();
       _scheduleReconnect();
-      notifyListeners();
     }
+    _notify();
   }
 
-  void disconnect() {
+  Future<void> disconnect() async {
     _connecting = false;
     _connected = false;
     _reconnectTimer?.cancel();
-    _publishTimer?.cancel();
-    _updatesSub?.cancel();
-    try {
-      _client?.disconnect();
-    } catch (_) {}
+    _reconnectTimer = null;
+
+    await _updatesSub?.cancel();
+    _updatesSub = null;
+
+    final c = _client;
     _client = null;
-    notifyListeners();
+    if (c != null) {
+      c.onDisconnected = null;
+      c.disconnect();
+    }
+    _notify();
+  }
+
+  void _subscribe(MqttServerClient client) {
+    client.subscribe(_config.commandTopic, MqttQos.atLeastOnce);
+    _updatesSub?.cancel();
+    _updatesSub = client.updates?.listen(_onMessages);
+  }
+
+  void _onMessages(List<MqttReceivedMessage<MqttMessage>> msgs) {
+    for (final msg in msgs) {
+      if (msg.topic != _config.commandTopic) continue;
+      final pub = msg.payload;
+      if (pub is! MqttPublishMessage) continue;
+      final text = MqttPublishPayload.bytesToStringAsString(pub.payload.message);
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is Map<String, dynamic>) {
+          onCommand?.call(decoded);
+        }
+      } catch (_) {
+        // Ignore malformed command payloads.
+      }
+    }
   }
 
   void _onConnected() {
     _connected = true;
     _error = null;
-    _reconnectTimer?.cancel();
-    notifyListeners();
-    _subscribe();
+    _notify();
   }
 
   void _onDisconnected() {
     _connected = false;
-    if (_config.enabled) {
-      _setError('disconnected from broker');
-      _scheduleReconnect();
-    }
-    notifyListeners();
+    _notify();
+    _scheduleReconnect();
   }
 
-  void _onSubscribed(String topic) {
-    // no-op; kept for parity
-  }
-
-  void _subscribe() {
-    final client = _client;
-    if (client == null || !_connected) return;
-    _updatesSub?.cancel();
-    _updatesSub = client.updates!.listen((msg) {
-      final topic = msg.topicName;
-      final payload = MqttPublishPayload.bytesToStringAsString(msg.payload.message);
-      if (topic == _config.commandTopic) {
-        _handleCommand(payload);
+  void _scheduleReconnect() {
+    if (_disposed || !_config.enabled || _connected || _connecting) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 5), () {
+      if (_config.enabled && !_connected && !_connecting) {
+        connect();
       }
     });
-    client.subscribe(_config.commandTopic, MqttQos.atLeastOnce);
   }
 
-  void _handleCommand(String payload) {
-    Map<String, dynamic> json;
-    try {
-      json = jsonDecode(payload) as Map<String, dynamic>;
-    } catch (_) {
-      return;
-    }
-    if (onCommand != null) onCommand!(json);
-  }
-
-  /// Publishes the current ESP32 state snapshot to the broker.
+  /// Publishes the full device state snapshot.
   Future<void> publishState(Esp32State state) async {
-    if (!_connected || _client == null) return;
+    final client = _client;
+    if (!_connected || client == null) return;
     final builder = MqttClientPayloadBuilder();
     builder.addString(jsonEncode(_stateToJson(state)));
-    _client!.publishMessage(
+    client.publishMessage(
       _config.stateTopic,
       MqttQos.atLeastOnce,
       builder.payload!,
@@ -206,7 +229,8 @@ class MqttService extends ChangeNotifier {
 
   /// Publishes a single device change.
   Future<void> publishDevice(Esp32Device device) async {
-    if (!_connected || _client == null) return;
+    final client = _client;
+    if (!_connected || client == null) return;
     final builder = MqttClientPayloadBuilder();
     builder.addString(jsonEncode({
       'id': device.id,
@@ -214,27 +238,14 @@ class MqttService extends ChangeNotifier {
       'watts': device.watts,
       'ts': DateTime.now().millisecondsSinceEpoch,
     }));
-    _client!.publishMessage('${_config.stateTopic}/device/${device.id}',
-        MqttQos.atLeastOnce, builder.payload!);
+    client.publishMessage(
+      '${_config.stateTopic}/device/${device.id}',
+      MqttQos.atLeastOnce,
+      builder.payload!,
+    );
   }
 
-  void _scheduleReconnect() {
-    if (!_config.enabled || _connected || _connecting) return;
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 5), () {
-      if (_config.enabled && !_connected && !_connecting) connect();
-    });
-  }
-
-  void _setError(String message) {
-    _error = message;
-    if (kDebugMode) print('[mqtt] $message');
-  }
-
-  String _mqttError(Object e) {
-    if (e is MqttException) return e.toString();
-    return e.toString();
-  }
+  String _mqttError(Object e) => e.toString();
 
   Map<String, dynamic> _stateToJson(Esp32State s) => {
         'name': s.name,
