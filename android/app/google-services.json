@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "737202518061",
+    "project_id": "esp32-468d9",
+    "storage_bucket": "esp32-468d9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:737202518061:android:829403cde685d50e3320a4",
+        "android_client_info": {
+          "package_name": "com.example.esp32_controller"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGm73cpnephiAfEXUCaoJaLY6CGDuN2aY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
