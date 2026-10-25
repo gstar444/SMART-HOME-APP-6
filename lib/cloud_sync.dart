@@ -22,13 +22,13 @@ class CloudSync {
   bool get _enabled => _authProvider.isAuthenticated;
 
   /// Reference to this user's settings document.
-  DocumentReference? _settingsRef() {
+  DocumentReference<Map<String, dynamic>>? _settingsRef() {
     if (!_enabled || _uid == null) return null;
     return _firestore.collection('users').doc(_uid).collection('app').doc('settings');
   }
 
   /// Reference to this user's owned ESP32 devices (pairing/ownership).
-  CollectionReference _devicesRef() {
+  CollectionReference<Map<String, dynamic>> _devicesRef() {
     if (!_enabled || _uid == null) {
       throw StateError('Not authenticated');
     }
